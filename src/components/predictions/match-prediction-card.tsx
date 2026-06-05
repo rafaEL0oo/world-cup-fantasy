@@ -6,8 +6,15 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { format } from "date-fns";
 import { toast } from "sonner";
-import { Lock, Save } from "lucide-react";
+import { Calendar, Lock, Save } from "lucide-react";
 import { savePrediction } from "@/app/actions/predictions";
+import {
+  getPredictionOpensAt,
+  isPredictionLocked,
+  isPredictionOpen,
+  PREDICTION_LOCK_MINUTES,
+  PREDICTION_WINDOW_DAYS,
+} from "@/lib/matches";
 import type { Match, Prediction } from "@/types/database";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,8 +47,11 @@ export function MatchPredictionCard({
   prediction,
 }: MatchPredictionCardProps) {
   const [pending, startTransition] = useTransition();
-  const isLocked = new Date(match.kickoff_at) <= new Date();
+  const canPredict = isPredictionOpen(match.kickoff_at);
+  const isLocked = isPredictionLocked(match.kickoff_at);
   const isFinished = match.status === "finished";
+  const isLive = match.status === "live";
+  const opensAt = getPredictionOpensAt(match.kickoff_at);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -67,6 +77,16 @@ export function MatchPredictionCard({
     });
   }
 
+  function getBadge() {
+    if (isFinished) return { label: "Finished", variant: "default" as const };
+    if (isLive) return { label: "Live", variant: "default" as const };
+    if (isLocked) return { label: "Locked", variant: "secondary" as const };
+    if (canPredict) return { label: "Open", variant: "outline" as const };
+    return { label: "Coming soon", variant: "secondary" as const };
+  }
+
+  const badge = getBadge();
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
@@ -76,15 +96,10 @@ export function MatchPredictionCard({
           </p>
           <p className="text-sm text-muted-foreground">
             {format(new Date(match.kickoff_at), "EEE, MMM d · HH:mm")}
+            {match.round && ` · ${match.round}`}
           </p>
         </div>
-        <Badge
-          variant={
-            isFinished ? "default" : isLocked ? "secondary" : "outline"
-          }
-        >
-          {isFinished ? "Finished" : isLocked ? "Locked" : "Open"}
-        </Badge>
+        <Badge variant={badge.variant}>{badge.label}</Badge>
       </CardHeader>
 
       <CardContent className="space-y-4">
@@ -103,7 +118,7 @@ export function MatchPredictionCard({
           </div>
         )}
 
-        {prediction && !isFinished && (
+        {prediction && !isFinished && canPredict && (
           <p className="text-sm text-muted-foreground">
             Your prediction:{" "}
             <span className="font-medium text-foreground">
@@ -112,12 +127,25 @@ export function MatchPredictionCard({
           </p>
         )}
 
-        {isLocked ? (
+        {!canPredict && !isFinished && !isLocked && (
+          <div className="flex items-center gap-2 rounded-lg bg-muted/60 px-4 py-3 text-sm text-muted-foreground">
+            <Calendar className="size-4 shrink-0" />
+            Predictions open on{" "}
+            <span className="font-medium text-foreground">
+              {format(opensAt, "EEE, MMM d · HH:mm")}
+            </span>{" "}
+            ({PREDICTION_WINDOW_DAYS} days before kickoff)
+          </div>
+        )}
+
+        {isLocked && !isFinished && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Lock className="size-4" />
-            Predictions locked after kickoff
+            Predictions lock {PREDICTION_LOCK_MINUTES} min before kickoff
           </div>
-        ) : (
+        )}
+
+        {canPredict && (
           <Form {...form}>
             <form
               onSubmit={form.handleSubmit(onSubmit)}

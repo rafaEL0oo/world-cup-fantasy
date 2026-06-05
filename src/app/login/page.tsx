@@ -12,7 +12,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; message?: string }>;
 }) {
   const params = await searchParams;
 
@@ -42,6 +42,11 @@ export default async function LoginPage({
             <Alert variant="destructive">
               <AlertDescription>
                 Authentication failed. Please try again.
+                {params.message && (
+                  <span className="mt-1 block text-xs opacity-90">
+                    {params.message}
+                  </span>
+                )}
               </AlertDescription>
             </Alert>
           )}

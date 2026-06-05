@@ -21,7 +21,8 @@ A social prediction platform for FIFA World Cup 2026. Create private leagues, in
 In the Supabase SQL editor, run:
 
 1. `supabase/schema.sql` — tables, RLS policies, scoring triggers
-2. `supabase/seed.sql` — sample World Cup 2026 fixtures
+2. `supabase/migrations/add-api-football.sql` — if upgrading an existing database
+3. `supabase/seed.sql` — optional sample fixtures (skip if using API-Football sync)
 
 ### 3. Configure environment variables
 
@@ -37,7 +38,14 @@ Fill in your Supabase project URL and anon key from **Project Settings → API**
 NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
+
+# Match sync (server-only)
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+API_FOOTBALL_KEY=your-api-football-key
+CRON_SECRET=some-random-secret
 ```
+
+Get your API-Football key at [api-football.com](https://www.api-football.com/). The service role key is in Supabase **Project Settings → API** (never expose it to the browser).
 
 ### 4. Run locally
 
@@ -90,14 +98,70 @@ supabase/
 └── seed.sql              # Match fixture seed data
 ```
 
-## Updating match results (admin)
+## Match data: built-in seed (free plan) or API-Football (paid)
 
-To test scoring, update a finished match in Supabase:
+> **Important:** API-Football's **free plan only covers seasons 2022–2024**. World Cup 2026 requires a **paid plan**. On the free plan, the app automatically seeds matches from built-in data when users log in.
+
+## Match data: widgets + database (hybrid)
+
+This app uses two complementary approaches:
+
+| Layer | Source | Purpose |
+|-------|--------|---------|
+| **Display** | [API-SPORTS widgets](https://www.api-football.com/widgets) | Live scores, fixtures, stats — auto-refresh in the browser |
+| **Database** | One-time import + optional manual sync | Predictions, kickoff lock, scoring, leaderboard |
+
+Widgets handle all **live display** without server API calls. Your database still needs match rows for users to submit predictions and earn points.
+
+### 1. Widget setup (live fixtures & scores)
+
+Add to `.env.local`:
+
+```env
+NEXT_PUBLIC_API_FOOTBALL_KEY=your-api-football-key
+```
+
+In the [API-Football dashboard](https://www.api-football.com/), **restrict the key to your domain** (e.g. `localhost`, `your-app.vercel.app`) since widgets load the key client-side.
+
+Widgets appear on the **Predictions** page and refresh every 60 seconds.
+
+### 2. Sync on login (1 request per login)
+
+Every time a user logs in and hits the dashboard, the app syncs matches:
+
+| Login # | API calls | What happens |
+|---------|-----------|--------------|
+| 1st (empty DB) | 1 | Full import of all WC fixtures |
+| Each login after | 1 | Updates scores & status (yesterday → tomorrow) |
+| 100+ logins/day | 0 | Skips API, uses existing DB data |
+
+With fewer than 100 logins per day you stay within the free API budget.
+
+- **Free plan (2022–2024 only)** → auto-falls back to 24 built-in WC 2026 fixtures
+- **Paid plan** → live API sync on every login
+
+Requires `SUPABASE_SERVICE_ROLE_KEY` and `API_FOOTBALL_KEY` in `.env.local`.
+
+To update scores on the free plan, edit matches directly in Supabase:
 
 ```sql
 update public.matches
 set home_score = 2, away_score = 1, status = 'finished'
-where home_team = 'Poland' and away_team = 'Brazil';
+where home_team = 'Mexico' and away_team = 'South Africa';
 ```
 
-Prediction points will recalculate automatically for all leagues.
+### 3. Manual sync (optional)
+
+```bash
+curl -X POST "http://localhost:3000/api/admin/sync-matches?mode=today" \
+  -H "Authorization: Bearer YOUR_CRON_SECRET"
+```
+
+### Request budget (free plan: 100/day)
+
+| Action | Requests | Frequency |
+|--------|----------|-----------|
+| Widget display | Handled by API-SPORTS widget | Automatic |
+| Login sync (empty DB) | 1 | First login |
+| Login sync (ongoing) | 1 per login | Each dashboard visit after login |
+| Manual admin sync | 1 | Optional |

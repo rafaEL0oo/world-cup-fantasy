@@ -44,10 +44,29 @@ create table public.matches (
   away_score int,
   status text not null default 'scheduled'
     check (status in ('scheduled', 'live', 'finished')),
+  api_football_id integer unique,
+  round text,
+  stage text,
+  last_synced_at timestamptz,
   created_at timestamptz not null default now()
 );
 
 create index matches_kickoff_at_idx on public.matches (kickoff_at);
+create index matches_api_football_id_idx on public.matches (api_football_id);
+create index matches_status_idx on public.matches (status);
+
+-- API sync log (tracks daily request budget)
+create table public.api_sync_log (
+  id uuid primary key default gen_random_uuid(),
+  endpoint text not null,
+  requests_used int not null default 1,
+  matches_updated int not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create index api_sync_log_created_at_idx on public.api_sync_log (created_at);
+
+alter table public.api_sync_log enable row level security;
 
 -- Predictions
 create table public.predictions (
@@ -211,6 +230,11 @@ create policy "Profiles are viewable by authenticated users"
   to authenticated
   using (true);
 
+create policy "Users can insert own profile"
+  on public.profiles for insert
+  to authenticated
+  with check (auth.uid() = id);
+
 create policy "Users can update own profile"
   on public.profiles for update
   to authenticated
@@ -218,10 +242,10 @@ create policy "Users can update own profile"
   with check (auth.uid() = id);
 
 -- Leagues policies
-create policy "League members can view leagues"
+create policy "League members and owners can view leagues"
   on public.leagues for select
   to authenticated
-  using (public.is_league_member(id));
+  using (public.is_league_member(id) or auth.uid() = owner_id);
 
 create policy "Authenticated users can create leagues"
   on public.leagues for insert
@@ -238,7 +262,7 @@ create policy "League owners can update leagues"
 create policy "League members can view members"
   on public.league_members for select
   to authenticated
-  using (public.is_league_member(league_id));
+  using (public.is_league_member(league_id) or auth.uid() = user_id);
 
 create policy "Users can join leagues"
   on public.league_members for insert
@@ -246,12 +270,16 @@ create policy "Users can join leagues"
   with check (auth.uid() = user_id);
 
 -- Matches policies (global fixture list)
+grant select on public.matches to authenticated;
+
 create policy "Authenticated users can view matches"
   on public.matches for select
   to authenticated
   using (true);
 
 -- Predictions policies
+grant select, insert, update, delete on public.predictions to authenticated;
+
 create policy "League members can view predictions in their league"
   on public.predictions for select
   to authenticated
@@ -277,6 +305,8 @@ create policy "League members can delete own predictions"
   using (auth.uid() = user_id and public.is_league_member(league_id));
 
 -- Tournament predictions policies
+grant select, insert, update on public.tournament_predictions to authenticated;
+
 create policy "League members can view tournament predictions"
   on public.tournament_predictions for select
   to authenticated
@@ -295,6 +325,50 @@ create policy "League members can update own tournament predictions"
   to authenticated
   using (auth.uid() = user_id and public.is_league_member(league_id))
   with check (auth.uid() = user_id and public.is_league_member(league_id));
+
+-- Sync log (service role only; block public reads)
+create policy "No public access to sync logs"
+  on public.api_sync_log for select
+  to authenticated
+  using (false);
+
+-- Create league (bypasses RLS edge cases during insert + membership setup)
+create or replace function public.create_league(p_name text, p_invite_code text)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_league_id uuid;
+  v_user_id uuid;
+begin
+  v_user_id := auth.uid();
+  if v_user_id is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  if trim(p_name) = '' then
+    raise exception 'League name is required';
+  end if;
+
+  if not exists (select 1 from public.profiles where id = v_user_id) then
+    raise exception 'Profile not found';
+  end if;
+
+  insert into public.leagues (name, invite_code, owner_id)
+  values (trim(p_name), upper(trim(p_invite_code)), v_user_id)
+  returning id into v_league_id;
+
+  insert into public.league_members (league_id, user_id)
+  values (v_league_id, v_user_id)
+  on conflict do nothing;
+
+  return v_league_id;
+end;
+$$;
+
+grant execute on function public.create_league(text, text) to authenticated;
 
 -- Join league by invite code (bypasses RLS so non-members can look up leagues)
 create or replace function public.join_league_by_invite(p_invite_code text)

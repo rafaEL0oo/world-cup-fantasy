@@ -1,4 +1,5 @@
-import { requireUser, getProfile } from "@/lib/auth";
+import { syncMatchesOnLogin } from "@/lib/api-football/sync";
+import { requireUser, getProfile, ensureProfile } from "@/lib/auth";
 import { getUserLeagues } from "@/lib/leagues";
 import { createClient } from "@/lib/supabase/server";
 import { AppShell } from "@/components/layout/app-shell";
@@ -8,7 +9,11 @@ import { LeagueCard } from "@/components/leagues/league-card";
 
 export default async function DashboardPage() {
   const user = await requireUser();
-  const profile = await getProfile(user.id);
+  const profile = (await getProfile(user.id)) ?? (await ensureProfile(user));
+
+  // Sync match data on login (1 API request per login, max 100/day)
+  await syncMatchesOnLogin();
+
   const leagues = await getUserLeagues(user.id);
 
   const supabase = await createClient();

@@ -2,6 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import {
+  isPredictionLocked,
+  isPredictionOpen,
+  PREDICTION_LOCK_MINUTES,
+  PREDICTION_WINDOW_DAYS,
+} from "@/lib/matches";
 import type { ActionResult } from "@/app/actions/leagues";
 
 export async function savePrediction(
@@ -33,8 +39,15 @@ export async function savePrediction(
     return { error: "Match not found." };
   }
 
-  if (new Date(match.kickoff_at) <= new Date()) {
-    return { error: "Predictions are locked after kickoff." };
+  if (!isPredictionOpen(match.kickoff_at)) {
+    if (isPredictionLocked(match.kickoff_at)) {
+      return {
+        error: `Predictions lock ${PREDICTION_LOCK_MINUTES} minutes before kickoff.`,
+      };
+    }
+    return {
+      error: `Predictions open ${PREDICTION_WINDOW_DAYS} days before kickoff.`,
+    };
   }
 
   const { data: existing } = await supabase
@@ -43,7 +56,7 @@ export async function savePrediction(
     .eq("user_id", user.id)
     .eq("league_id", leagueId)
     .eq("match_id", matchId)
-    .single();
+    .maybeSingle();
 
   if (existing) {
     const { error } = await supabase

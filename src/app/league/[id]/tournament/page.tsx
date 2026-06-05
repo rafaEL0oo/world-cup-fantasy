@@ -1,10 +1,15 @@
 import { requireUser } from "@/lib/auth";
 import { getLeague, requireLeagueMember } from "@/lib/leagues";
+import {
+  getTeamsFromMatches,
+  getTournamentStartTime,
+  isTournamentStarted,
+} from "@/lib/matches";
 import { createClient } from "@/lib/supabase/server";
 import { AppShell } from "@/components/layout/app-shell";
 import { LeagueNav } from "@/components/layout/league-nav";
 import { TournamentForm } from "@/components/tournament/tournament-form";
-import type { TournamentPrediction } from "@/types/database";
+import type { Match, TournamentPrediction } from "@/types/database";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -19,12 +24,23 @@ export default async function TournamentPage({ params }: PageProps) {
   if (!league) return null;
 
   const supabase = await createClient();
+
+  const { data: matches } = await supabase
+    .from("matches")
+    .select("*")
+    .order("kickoff_at", { ascending: true });
+
+  const allMatches = (matches ?? []) as Match[];
+  const teams = getTeamsFromMatches(allMatches);
+  const tournamentStarted = isTournamentStarted(allMatches);
+  const tournamentStart = getTournamentStartTime(allMatches);
+
   const { data: existing } = await supabase
     .from("tournament_predictions")
     .select("*")
     .eq("league_id", id)
     .eq("user_id", user.id)
-    .single();
+    .maybeSingle();
 
   return (
     <AppShell user={{ email: user.email }}>
@@ -43,7 +59,10 @@ export default async function TournamentPage({ params }: PageProps) {
 
         <TournamentForm
           leagueId={id}
+          teams={teams}
           existing={existing as TournamentPrediction | null}
+          locked={tournamentStarted}
+          tournamentStartAt={tournamentStart?.toISOString() ?? null}
         />
       </div>
     </AppShell>

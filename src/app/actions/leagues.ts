@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { ensureProfile } from "@/lib/auth";
 import { generateInviteCode } from "@/lib/invite-code";
 
 export type ActionResult = { error?: string; success?: boolean };
@@ -22,31 +23,33 @@ export async function createLeague(name: string): Promise<ActionResult> {
     return { error: "You must be logged in." };
   }
 
+  try {
+    await ensureProfile(user);
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : "Failed to set up your profile.",
+    };
+  }
+
   let inviteCode = generateInviteCode();
   let attempts = 0;
 
   while (attempts < 5) {
-    const { data: league, error } = await supabase
-      .from("leagues")
-      .insert({
-        name: trimmed,
-        invite_code: inviteCode,
-        owner_id: user.id,
-      })
-      .select("id")
-      .single();
+    const { data: leagueId, error } = await supabase.rpc("create_league", {
+      p_name: trimmed,
+      p_invite_code: inviteCode,
+    });
 
-    if (!error && league) {
-      await supabase.from("league_members").insert({
-        league_id: league.id,
-        user_id: user.id,
-      });
-
+    if (!error && leagueId) {
       revalidatePath("/dashboard");
-      redirect(`/league/${league.id}`);
+      redirect(`/league/${leagueId}`);
     }
 
-    if (error?.code === "23505") {
+    if (
+      error?.message?.includes("duplicate") ||
+      error?.message?.includes("unique") ||
+      error?.code === "23505"
+    ) {
       inviteCode = generateInviteCode();
       attempts++;
       continue;
@@ -71,6 +74,14 @@ export async function joinLeague(inviteCode: string): Promise<ActionResult> {
 
   if (!user) {
     return { error: "You must be logged in." };
+  }
+
+  try {
+    await ensureProfile(user);
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : "Failed to set up your profile.",
+    };
   }
 
   const { data: leagueId, error: joinError } = await supabase.rpc(

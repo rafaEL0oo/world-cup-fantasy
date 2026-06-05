@@ -29,6 +29,10 @@ export interface Match {
   home_score: number | null;
   away_score: number | null;
   status: MatchStatus;
+  api_football_id: number | null;
+  round: string | null;
+  stage: string | null;
+  last_synced_at: string | null;
   created_at: string;
 }
 

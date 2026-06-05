@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { isTournamentStarted } from "@/lib/matches";
+import type { Match } from "@/types/database";
 import type { ActionResult } from "@/app/actions/leagues";
 
 interface TournamentInput {
@@ -31,12 +33,23 @@ export async function saveTournamentPrediction(
     return { error: "You must be logged in." };
   }
 
+  const { data: matches } = await supabase
+    .from("matches")
+    .select("kickoff_at, round")
+    .order("kickoff_at", { ascending: true });
+
+  if (isTournamentStarted((matches ?? []) as Match[])) {
+    return {
+      error: "Tournament predictions are locked — the tournament has started.",
+    };
+  }
+
   const { data: existing } = await supabase
     .from("tournament_predictions")
     .select("id")
     .eq("user_id", user.id)
     .eq("league_id", input.leagueId)
-    .single();
+    .maybeSingle();
 
   if (existing) {
     const { error } = await supabase

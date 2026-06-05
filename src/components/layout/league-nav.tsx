@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Home, Target, Trophy } from "lucide-react";
+import { BarChart3, Calendar, Home, Target, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface LeagueNavProps {
@@ -12,6 +12,7 @@ interface LeagueNavProps {
 const links = [
   { href: "", label: "Overview", icon: Home },
   { href: "/predictions", label: "Predictions", icon: Target },
+  { href: "/results", label: "Results", icon: Calendar },
   { href: "/leaderboard", label: "Leaderboard", icon: BarChart3 },
   { href: "/tournament", label: "Tournament", icon: Trophy },
 ];
