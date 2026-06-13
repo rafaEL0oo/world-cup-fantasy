@@ -3,28 +3,15 @@ import { fetchWorldCup2026Games, WorldCup2026Error } from "./client";
 import { mapGameToMatch } from "./mappers";
 import type { WorldCup2026SyncResult } from "./types";
 
-async function cleanupOrphanSeedRows(): Promise<void> {
-  const supabase = createAdminClient();
-
-  const { data: predictions } = await supabase
-    .from("predictions")
-    .select("match_id");
-
-  const usedMatchIds = new Set((predictions ?? []).map((row) => row.match_id));
-
-  const { data: seedRows } = await supabase
-    .from("matches")
-    .select("id")
-    .is("api_football_id", null);
-
-  const orphanIds = (seedRows ?? [])
-    .map((row) => row.id)
-    .filter((id) => !usedMatchIds.has(id));
-
-  if (!orphanIds.length) return;
-
-  await supabase.from("matches").delete().in("id", orphanIds);
-}
+/** Old seed names → worldcup26.ir names (keeps predictions on the same match row). */
+const TEAM_ALIASES: Record<string, string> = {
+  "UEFA Playoff D": "Czech Republic",
+  "UEFA Playoff A": "Bosnia and Herzegovina",
+  "UEFA Playoff C": "Turkey",
+  "UEFA Playoff B": "Wales",
+  "UEFA Playoff Path": "Denmark",
+  USA: "United States",
+};
 
 async function logSync(matchesUpdated: number) {
   try {
@@ -39,6 +26,15 @@ async function logSync(matchesUpdated: number) {
   }
 }
 
+function teamVariants(canonical: string): string[] {
+  const aliases = Object.entries(TEAM_ALIASES)
+    .filter(([, name]) => name === canonical)
+    .map(([alias]) => alias);
+
+  return [canonical, ...aliases];
+}
+
+/** Update old seed rows in place BEFORE upsert so predictions keep the same match_id. */
 async function linkLegacySeedRows(
   rows: ReturnType<typeof mapGameToMatch>[]
 ): Promise<void> {
@@ -49,21 +45,27 @@ async function linkLegacySeedRows(
       continue;
     }
 
-    await supabase
-      .from("matches")
-      .update({
-        api_football_id: row.api_football_id,
-        home_score: row.home_score,
-        away_score: row.away_score,
-        status: row.status,
-        kickoff_at: row.kickoff_at,
-        round: row.round,
-        stage: row.stage,
-        last_synced_at: row.last_synced_at,
-      })
-      .eq("home_team", row.home_team)
-      .eq("away_team", row.away_team)
-      .is("api_football_id", null);
+    for (const home of teamVariants(row.home_team)) {
+      for (const away of teamVariants(row.away_team)) {
+        await supabase
+          .from("matches")
+          .update({
+            api_football_id: row.api_football_id,
+            home_team: row.home_team,
+            away_team: row.away_team,
+            home_score: row.home_score,
+            away_score: row.away_score,
+            status: row.status,
+            kickoff_at: row.kickoff_at,
+            round: row.round,
+            stage: row.stage,
+            last_synced_at: row.last_synced_at,
+          })
+          .eq("home_team", home)
+          .eq("away_team", away)
+          .is("api_football_id", null);
+      }
+    }
   }
 }
 
@@ -76,6 +78,9 @@ export async function syncWorldCup2026Matches(): Promise<WorldCup2026SyncResult>
 
   const supabase = createAdminClient();
   const rows = games.map((game) => mapGameToMatch(game, stadiums));
+
+  // Link seed rows first — preserves prediction match_id references
+  await linkLegacySeedRows(rows);
 
   const { data: upserted, error: rpcError } = await supabase.rpc(
     "bulk_upsert_matches",
@@ -98,9 +103,6 @@ export async function syncWorldCup2026Matches(): Promise<WorldCup2026SyncResult>
   }
 
   const matchCount = typeof upserted === "number" ? upserted : rows.length;
-
-  await linkLegacySeedRows(rows);
-  await cleanupOrphanSeedRows();
   await logSync(matchCount);
 
   return {

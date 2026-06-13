@@ -4,7 +4,7 @@ import { useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { format } from "date-fns";
+import { formatKickoffCEST } from "@/lib/dates";
 import { toast } from "sonner";
 import { Lock } from "lucide-react";
 import { saveTournamentPrediction } from "@/app/actions/tournament";
@@ -106,7 +106,7 @@ export function TournamentForm({
           {tournamentStartAt && !locked && (
             <p className="text-xs text-muted-foreground">
               Tournament starts{" "}
-              {format(new Date(tournamentStartAt), "EEE, MMM d · HH:mm")}
+              {formatKickoffCEST(tournamentStartAt)}
             </p>
           )}
         </div>
@@ -119,7 +119,7 @@ export function TournamentForm({
             Tournament predictions cannot be changed after the first match
             kicks off
             {tournamentStartAt &&
-              ` (${format(new Date(tournamentStartAt), "MMM d, yyyy HH:mm")})`}
+              ` (${formatKickoffCEST(tournamentStartAt)})`}
             .
           </div>
         )}

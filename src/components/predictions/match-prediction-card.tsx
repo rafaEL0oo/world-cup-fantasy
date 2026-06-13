@@ -4,7 +4,7 @@ import { useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { format } from "date-fns";
+import { formatKickoffCEST } from "@/lib/dates";
 import { toast } from "sonner";
 import { Calendar, Lock, Save } from "lucide-react";
 import { savePrediction } from "@/app/actions/predictions";
@@ -95,7 +95,7 @@ export function MatchPredictionCard({
             {match.home_team} vs {match.away_team}
           </p>
           <p className="text-sm text-muted-foreground">
-            {format(new Date(match.kickoff_at), "EEE, MMM d · HH:mm")}
+            {formatKickoffCEST(match.kickoff_at)}
             {match.round && ` · ${match.round}`}
           </p>
         </div>
@@ -132,7 +132,7 @@ export function MatchPredictionCard({
             <Calendar className="size-4 shrink-0" />
             Predictions open on{" "}
             <span className="font-medium text-foreground">
-              {format(opensAt, "EEE, MMM d · HH:mm")}
+              {formatKickoffCEST(opensAt)}
             </span>{" "}
             ({PREDICTION_WINDOW_DAYS} days before kickoff)
           </div>
