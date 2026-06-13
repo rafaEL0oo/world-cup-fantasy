@@ -221,7 +221,7 @@ export async function refreshMatchesFromApi(): Promise<RefreshMatchesOutcome> {
       ok: false,
       code: "no_admin",
       message:
-        "Server sync is not configured. Add SUPABASE_SERVICE_ROLE_KEY to refresh matches.",
+        "Match sync is not configured on the server. Add SUPABASE_SERVICE_ROLE_KEY in Vercel → Settings → Environment Variables, then redeploy.",
     };
   }
 

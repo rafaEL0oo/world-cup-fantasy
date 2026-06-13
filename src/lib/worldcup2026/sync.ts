@@ -77,22 +77,36 @@ export async function syncWorldCup2026Matches(): Promise<WorldCup2026SyncResult>
   const supabase = createAdminClient();
   const rows = games.map((game) => mapGameToMatch(game, stadiums));
 
-  const { error } = await supabase
-    .from("matches")
-    .upsert(rows, { onConflict: "api_football_id" });
+  const { data: upserted, error: rpcError } = await supabase.rpc(
+    "bulk_upsert_matches",
+    { p_rows: rows }
+  );
 
-  if (error) {
-    throw new Error(`Failed to upsert World Cup 2026 matches: ${error.message}`);
+  if (rpcError) {
+    const { error: directError } = await supabase
+      .from("matches")
+      .upsert(rows, { onConflict: "api_football_id" });
+
+    if (directError) {
+      throw new Error(
+        `Failed to upsert World Cup 2026 matches: ${rpcError.message}. ` +
+          `Also tried direct upsert: ${directError.message}. ` +
+          `Run supabase/fix-all-rls.sql in the Supabase SQL editor and ensure ` +
+          `SUPABASE_SERVICE_ROLE_KEY is set on Vercel.`
+      );
+    }
   }
+
+  const matchCount = typeof upserted === "number" ? upserted : rows.length;
 
   await linkLegacySeedRows(rows);
   await cleanupOrphanSeedRows();
-  await logSync(rows.length);
+  await logSync(matchCount);
 
   return {
     source: "worldcup2026",
     requestsUsed: 0,
-    matchesUpserted: rows.length,
+    matchesUpserted: matchCount,
   };
 }
 
