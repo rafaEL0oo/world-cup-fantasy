@@ -1,6 +1,10 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { seedMatchesIfEmpty } from "@/lib/matches/seed-matches";
 import {
+  syncWorldCup2026Matches,
+  WorldCup2026Error,
+} from "@/lib/worldcup2026/sync";
+import {
   ApiFootballError,
   fetchAllWorldCupFixtures,
   fetchLiveWorldCupFixtures,
@@ -162,6 +166,137 @@ export async function syncMatchesSmart(): Promise<SyncResult> {
   return syncMatches("today");
 }
 
+export interface MatchSyncStatus {
+  source: "worldcup2026" | "api-football" | "seed";
+  apiConfigured: boolean;
+  seasonBlocked: boolean;
+  dailyUsed: number;
+  dailyLimit: number;
+  remainingRequests: number;
+  usesFreeFeed: boolean;
+}
+
+export async function getMatchSyncStatus(): Promise<MatchSyncStatus> {
+  const dailyLimit = getDailyRequestLimit();
+  const dailyUsed = await getDailyRequestCount();
+  const apiConfigured = !!process.env.API_FOOTBALL_KEY;
+  const seasonBlocked = await isApiSeasonBlocked();
+  const usesFreeFeed = !apiConfigured || seasonBlocked;
+
+  return {
+    source: usesFreeFeed ? "worldcup2026" : "api-football",
+    apiConfigured,
+    seasonBlocked,
+    dailyUsed,
+    dailyLimit,
+    remainingRequests: usesFreeFeed
+      ? -1
+      : Math.max(0, dailyLimit - dailyUsed),
+    usesFreeFeed,
+  };
+}
+
+export type RefreshMatchesOutcome =
+  | {
+      ok: true;
+      source: "worldcup2026" | "api-football";
+      matchesUpserted: number;
+      remainingRequests: number;
+    }
+  | {
+      ok: false;
+      code:
+        | "no_api"
+        | "no_admin"
+        | "season_blocked"
+        | "limit_exceeded"
+        | "rate_limit"
+        | "error";
+      message: string;
+    };
+
+export async function refreshMatchesFromApi(): Promise<RefreshMatchesOutcome> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return {
+      ok: false,
+      code: "no_admin",
+      message:
+        "Server sync is not configured. Add SUPABASE_SERVICE_ROLE_KEY to refresh matches.",
+    };
+  }
+
+  try {
+    const result = await syncWorldCup2026Matches();
+    return {
+      ok: true,
+      source: "worldcup2026",
+      matchesUpserted: result.matchesUpserted,
+      remainingRequests: -1,
+    };
+  } catch (error) {
+    if (error instanceof WorldCup2026Error && error.code === "rate_limit") {
+      return {
+        ok: false,
+        code: "rate_limit",
+        message: error.message,
+      };
+    }
+
+    const canUseApiFootball =
+      !!process.env.API_FOOTBALL_KEY && !(await isApiSeasonBlocked());
+
+    if (!canUseApiFootball) {
+      return {
+        ok: false,
+        code: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to refresh matches from the free World Cup 2026 feed.",
+      };
+    }
+
+    const dailyUsed = await getDailyRequestCount();
+    const limit = getDailyRequestLimit();
+    if (dailyUsed >= limit) {
+      return {
+        ok: false,
+        code: "limit_exceeded",
+        message: `Daily API-Football limit reached (${limit}/${limit}). Please wait until tomorrow to fetch updated match results.`,
+      };
+    }
+
+    try {
+      const result = await syncMatches("today");
+      return {
+        ok: true,
+        source: "api-football",
+        matchesUpserted: result.matchesUpserted,
+        remainingRequests: result.remainingBudget,
+      };
+    } catch (apiError) {
+      if (isSeasonRestrictedError(apiError)) {
+        await markApiSeasonBlocked();
+        return {
+          ok: false,
+          code: "season_blocked",
+          message:
+            "World Cup 2026 is not available on the free API-Football plan.",
+        };
+      }
+
+      return {
+        ok: false,
+        code: "error",
+        message:
+          apiError instanceof Error
+            ? apiError.message
+            : "Failed to refresh matches.",
+      };
+    }
+  }
+}
+
 async function getMatchCount(): Promise<number> {
   const supabase = await getAdminSupabase();
   if (!supabase) return 0;
@@ -184,6 +319,19 @@ async function getMatchCount(): Promise<number> {
  */
 export async function syncMatchesOnLogin(): Promise<void> {
   try {
+    if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      try {
+        await syncWorldCup2026Matches();
+        return;
+      } catch (error) {
+        if (error instanceof WorldCup2026Error && error.code === "rate_limit") {
+          console.warn("World Cup 2026 sync skipped:", error.message);
+        } else {
+          console.error("World Cup 2026 sync failed:", error);
+        }
+      }
+    }
+
     if (!process.env.API_FOOTBALL_KEY) {
       await seedMatchesIfEmpty();
       return;

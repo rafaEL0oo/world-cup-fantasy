@@ -5,9 +5,11 @@ import {
   PREDICTION_WINDOW_DAYS,
   splitMatchesForPrediction,
 } from "@/lib/matches";
+import { getMatchSyncStatus } from "@/lib/api-football/sync";
 import { createClient } from "@/lib/supabase/server";
 import { AppShell } from "@/components/layout/app-shell";
 import { LeagueNav } from "@/components/layout/league-nav";
+import { RefreshMatchesButton } from "@/components/matches/refresh-matches-button";
 import { MatchPredictionCard } from "@/components/predictions/match-prediction-card";
 import type { Match, Prediction } from "@/types/database";
 
@@ -43,18 +45,26 @@ export default async function PredictionsPage({ params }: PageProps) {
     (predictions ?? []).map((p) => [p.match_id, p as Prediction])
   );
 
+  const syncStatus = await getMatchSyncStatus();
   const hasMatches = openNow.length > 0 || comingLater.length > 0;
 
   return (
     <AppShell user={{ email: user.email }}>
       <div className="space-y-6">
         <div className="space-y-4">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Predictions</h1>
-            <p className="text-muted-foreground">
-              {league.name} — predict from {PREDICTION_WINDOW_DAYS} days before
-              kickoff (locks {PREDICTION_LOCK_MINUTES} min before)
-            </p>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">Predictions</h1>
+              <p className="text-muted-foreground">
+                {league.name} — predict from {PREDICTION_WINDOW_DAYS} days before
+                kickoff (locks {PREDICTION_LOCK_MINUTES} min before)
+              </p>
+            </div>
+            <RefreshMatchesButton
+              leagueId={id}
+              usesFreeFeed={syncStatus.usesFreeFeed}
+              remainingRequests={syncStatus.remainingRequests}
+            />
           </div>
           <LeagueNav leagueId={id} />
         </div>
